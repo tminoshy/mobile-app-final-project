@@ -20,7 +20,10 @@ List<Json> asList(Object? value) =>
 List<Json> items(Object? value) => value is List
     ? asList(value)
     : asList(
-        asMap(value)['items'] ??
+        // The backend wraps every list response as {"data": [...]}. The
+        // other keys are kept as a fallback for any endpoint shaped differently.
+        asMap(value)['data'] ??
+            asMap(value)['items'] ??
             asMap(value)['content'] ??
             asMap(value)['notifications'] ??
             asMap(value)['groups'] ??

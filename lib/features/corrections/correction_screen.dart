@@ -36,11 +36,11 @@ class _CorrectionDetailScreenState
         builder: (context, value, reload) {
           final c = asMap(value['correction']), g = asMap(value['group']);
           final status = (c['status'] ?? 'pending').toString().toLowerCase();
-          final before = asMap(c['before'] ?? c['originalExpense']),
-              after = asMap(c['after'] ?? c['proposedExpense']);
-          final decisions = asList(c['approvers'] ?? c['approvals']);
+          final before = asMap(c['previous'] ?? c['before']),
+              after = asMap(c['proposed'] ?? c['after']);
+          final decisions = asList(c['approvals'] ?? c['approvers']);
           final mine = decisions
-              .where((a) => a['userId'] == app.userId)
+              .where((a) => asMap(a['user'])['userId'] == app.userId)
               .firstOrNull;
           final canApprove =
               c['canApprove'] == true ||
@@ -48,11 +48,7 @@ class _CorrectionDetailScreenState
                   ['pending', 'no_response', 'no response'].contains(
                     (mine['status'] ?? 'pending').toString().toLowerCase(),
                   ));
-          final creator =
-              (c['createdByUserId'] ??
-                  c['requestedByUserId'] ??
-                  c['requesterId']) ==
-              app.userId;
+          final creator = asMap(c['requestedBy'])['userId'] == app.userId;
           final full = fullAccess(g);
           Future<void> decide(String action, {Json? body}) async {
             await app.groups.write(
@@ -88,20 +84,20 @@ class _CorrectionDetailScreenState
                 )
               else
                 StatePanel(
-                  status == 'approved'
+                  status == 'completed'
                       ? 'Correction approved'
                       : status == 'rejected'
                       ? 'Correction rejected'
                       : status == 'withdrawn'
                       ? 'Request withdrawn'
                       : 'Request completed',
-                  tone: status == 'approved' ? 'success' : 'info',
+                  tone: status == 'completed' ? 'success' : 'info',
                 ),
               KeyValueCard({
                 'Previous total': Money.format(
                   Money.fromJson(before['totalAmount'] ?? c['oldTotalAmount']),
                 ),
-                'Proposed total': (c['type'] == 'cancel')
+                'Proposed total': (c['type'] == 'cancellation')
                     ? 'Cancelled'
                     : Money.format(
                         Money.fromJson(
@@ -115,22 +111,33 @@ class _CorrectionDetailScreenState
               const SectionTitle('Share changes'),
               FTCard(
                 children: [
-                  ...asList(c['shareChanges'] ?? c['participants']).map(
-                    (s) => PersonRow(
-                      (s['displayName'] ?? s['name'] ?? s['userId'] ?? 'Member')
+                  ...asList(c['shares'] ?? c['shareChanges']).map((s) {
+                    final user = asMap(s['user']);
+                    final uid = user['userId']?.toString();
+                    final effect = uid == null
+                        ? null
+                        : asList(c['balanceEffects'])
+                              .where((b) => asMap(b['user'])['userId'] == uid)
+                              .firstOrNull;
+                    return PersonRow(
+                      (user['displayName'] ??
+                              s['displayName'] ??
+                              s['name'] ??
+                              'Member')
                           .toString(),
                       subtitle:
-                          '${Money.format(Money.fromJson(s['oldAmount'] ?? s['beforeAmount']))} → ${Money.format(Money.fromJson(s['newAmount'] ?? s['afterAmount']))}',
-                      trailing: s['balanceEffect'] == null
+                          '${s['previousAmount'] == null ? 'Not included' : Money.format(Money.fromJson(s['previousAmount'] ?? s['oldAmount'] ?? s['beforeAmount']))} → ${s['proposedAmount'] == null ? 'Not included' : Money.format(Money.fromJson(s['proposedAmount'] ?? s['newAmount'] ?? s['afterAmount']))}',
+                      trailing: effect == null
                           ? null
                           : AmountText(
-                              Money.fromJson(s['balanceEffect']),
+                              Money.fromJson(effect['projectedBalance']) -
+                                  Money.fromJson(effect['currentBalance']),
                               signed: true,
                               size: 14,
                             ),
-                    ),
-                  ),
-                  if (asList(c['shareChanges'] ?? c['participants']).isEmpty)
+                    );
+                  }),
+                  if (asList(c['shares'] ?? c['shareChanges']).isEmpty)
                     const Caption(
                       'Review the original and proposed totals above.',
                     ),
@@ -139,16 +146,21 @@ class _CorrectionDetailScreenState
               const SectionTitle('Required approvals'),
               FTCard(
                 children: [
-                  ...decisions.map(
-                    (a) => PersonRow(
-                      (a['displayName'] ?? a['name'] ?? a['userId'] ?? 'Member')
+                  ...decisions.map((a) {
+                    final user = asMap(a['user']);
+                    return PersonRow(
+                      (user['displayName'] ??
+                              a['displayName'] ??
+                              a['name'] ??
+                              'Member')
                           .toString(),
-                      subtitle: a['note']?.toString(),
+                      subtitle:
+                          (a['rejectionNote'] ?? a['note'])?.toString(),
                       trailing: StatusBadge(
                         a['status']?.toString() ?? 'No response',
                       ),
-                    ),
-                  ),
+                    );
+                  }),
                   if (decisions.isEmpty)
                     const Caption('No outstanding member responses.'),
                 ],

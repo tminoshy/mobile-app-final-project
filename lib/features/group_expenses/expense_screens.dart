@@ -69,7 +69,9 @@ class _SharedExpenseFormScreenState
         );
         category.text = e['category']?.toString() ?? '';
         note.text = e['note']?.toString() ?? '';
-        payer = (e['paidByUserId'] ?? e['payerId'] ?? payer).toString();
+        payer =
+            (e['payerUserId'] ?? asMap(e['payer'])['userId'] ?? payer)
+                .toString();
         if (e['occurredAt'] != null) {
           date = parseUtc(e['occurredAt'].toString()).toLocal();
         }
@@ -120,7 +122,7 @@ class _SharedExpenseFormScreenState
       'totalAmount': Money.toJson(total),
       'occurredAt': date.toUtc().toIso8601String(),
       'category': category.text.trim(),
-      'paidByUserId': payer,
+      'payerUserId': payer,
       'splitMethod': method,
       'participants': [
         for (final id in participants)
@@ -135,10 +137,32 @@ class _SharedExpenseFormScreenState
     };
   }
 
+  /// The correction endpoints wrap expense fields in a `proposed` object
+  /// alongside `type`/`reason`/`baseVersion`; plain expense/split-preview
+  /// calls send the expense fields directly.
+  Json wireBody(Json d) => correction
+      ? {
+          'type': 'correction',
+          'reason': d['reason'],
+          'baseVersion': d['baseVersion'],
+          'proposed': {
+            'title': d['title'],
+            'totalAmount': d['totalAmount'],
+            'occurredAt': d['occurredAt'],
+            'category': d['category'],
+            'payerUserId': d['payerUserId'],
+            'splitMethod': d['splitMethod'],
+            'participants': d['participants'],
+          },
+        }
+      : d;
+
   Widget review() {
     final app = ref.read(appProvider);
     final d = draft!, p = preview!;
-    final shares = asList(p['participants'] ?? p['shares']);
+    // Plain expenses preview as {splits:[{user,amount,...}]}; corrections
+    // preview as {shares:[{user,previousAmount,proposedAmount}]}.
+    final shares = asList(p['splits'] ?? p['shares'] ?? p['participants']);
     final total = Money.fromJson(d['totalAmount']);
     final fallback = equalSplit(total, participants.toList());
     return PageBody(
@@ -159,17 +183,25 @@ class _SharedExpenseFormScreenState
           children: [
             if (shares.isNotEmpty)
               ...shares.map((s) {
-                final uid = (s['userId'] ?? s['id']).toString();
+                final user = asMap(s['user']);
+                final uid = (s['userId'] ?? s['id'] ?? user['userId'])
+                    .toString();
                 final member = asList(
                   group!['members'],
                 ).where((m) => app.groups.memberId(m) == uid).firstOrNull;
                 return PersonRow(
                   member == null
-                      ? (s['displayName'] ?? s['name'] ?? 'Member').toString()
+                      ? (s['displayName'] ??
+                                s['name'] ??
+                                user['displayName'] ??
+                                'Member')
+                            .toString()
                       : app.groups.memberName(member),
                   subtitle: uid == app.userId ? 'You' : null,
                   trailing: AmountText(
-                    Money.fromJson(s['amount'] ?? s['shareAmount']),
+                    Money.fromJson(
+                      s['amount'] ?? s['shareAmount'] ?? s['proposedAmount'],
+                    ),
                     size: 16,
                   ),
                 );
@@ -192,10 +224,10 @@ class _SharedExpenseFormScreenState
               }),
           ],
         ),
-        if (p['roundingAdjustment'] != null)
+        if (Money.fromJson(p['roundingAdjustmentTotal']) != 0)
           StatePanel(
             'Rounding adjustment',
-            detail: p['roundingAdjustment'].toString(),
+            detail: Money.format(Money.fromJson(p['roundingAdjustmentTotal'])),
           ),
         if (correction)
           KeyValueCard({
@@ -216,7 +248,7 @@ class _SharedExpenseFormScreenState
             final path = correction
                 ? '/groups/${widget.groupId}/expenses/${widget.expenseId}/corrections'
                 : '/groups/${widget.groupId}/expenses';
-            final result = asMap(await app.groups.submit(path, d));
+            final result = asMap(await app.groups.submit(path, wireBody(d)));
             await app.refresh();
             if (mounted) {
               if (correction) {
@@ -366,7 +398,7 @@ class _SharedExpenseFormScreenState
                 ? '/groups/${widget.groupId}/expenses/${widget.expenseId}/corrections/preview'
                 : '/groups/${widget.groupId}/expenses/split-preview';
             final result = asMap(
-              await app.groups.write('POST', path, data: data),
+              await app.groups.write('POST', path, data: wireBody(data)),
             );
             if (mounted) {
               setState(() {
@@ -435,7 +467,9 @@ class _SharedExpenseDetailScreenState
           final e = asMap(value['expense']), g = asMap(value['group']);
           final full = fullAccess(g);
           final creator =
-              (e['createdByUserId'] ?? e['createdBy'] ?? e['creatorId']) ==
+              (e['createdByUserId'] ??
+                  asMap(e['createdBy'])['userId'] ??
+                  e['creatorId']) ==
               app.userId;
           final shares = asList(e['participants'] ?? e['shares']);
           final personal = app.workspace.entries
@@ -481,9 +515,9 @@ class _SharedExpenseDetailScreenState
                 'Group category': e['category']?.toString() ?? 'Uncategorized',
                 'Date': e['occurredAt']?.toString() ?? '',
                 'Paid by':
-                    (e['paidByName'] ??
+                    (asMap(e['payer'])['displayName'] ??
                             e['payerName'] ??
-                            e['paidByUserId'] ??
+                            e['payerUserId'] ??
                             '')
                         .toString(),
                 if (e['note']?.toString().isNotEmpty == true)
@@ -562,7 +596,7 @@ class _SharedExpenseDetailScreenState
                       await app.groups.submit(
                         '/groups/${widget.groupId}/expenses/${widget.expenseId}/corrections',
                         {
-                          'type': 'cancel',
+                          'type': 'cancellation',
                           'baseVersion': e['version'],
                           'reason': reason,
                         },

@@ -185,14 +185,29 @@ class SyncEngine {
           } else {
             final pending = d.outbox.firstWhere((o) => o['seq'] == row['seq']);
             pending['status'] = 'failed';
-            pending['lastError'] =
-                result['message'] ??
-                result['code'] ??
-                'The server rejected this change.';
+            pending['lastError'] = _describeRejection(status, result);
           }
         }
       });
     }
+  }
+
+  /// The per-record push result nests the real reason under `error`, so the
+  /// generic status string alone ("rejected_invalid") is not useful to show.
+  String _describeRejection(String status, Json result) {
+    if (status != 'rejected_invalid') {
+      return 'The server rejected this change ($status).';
+    }
+    final details = asList(asMap(result['error'])['details']);
+    if (details.isEmpty) {
+      return 'The server rejected this change: the data was invalid.';
+    }
+    final first = details.first;
+    final field = first['field']?.toString().split('.').last;
+    final message = first['message']?.toString();
+    return field != null && message != null
+        ? 'Rejected: $field – $message'
+        : 'The server rejected this change: the data was invalid.';
   }
 
   Json _payload(Json data) => {...data}
@@ -306,7 +321,18 @@ class SyncEngine {
         d.outbox.removeWhere(
           (o) => o['recordId'] == id && o['recordType'] == pair.key,
         );
-        d.records(pair.key)[id] = {...record, 'dirty': false};
+        d.records(pair.key)[id] = {
+          ...record,
+          // The server nests category/bucket as {id, name} objects on pull,
+          // but local code (Entry.fromJson, category/bucket reassignment)
+          // reads flat categoryId/bucketId everywhere, matching what the
+          // app itself sends on push.
+          if (pair.key == 'entry') ...{
+            'categoryId': record['categoryId'] ?? asMap(record['category'])['id'],
+            'bucketId': record['bucketId'] ?? asMap(record['bucket'])['id'],
+          },
+          'dirty': false,
+        };
       }
     }
     for (final marker in asList(page['deletions'])) {

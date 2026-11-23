@@ -37,6 +37,29 @@ class GroupRepository {
           'hasMore': false,
           'nextCursor': page['nextCursor'],
         };
+      } else {
+        // Groups/expenses/repayments/invitations/corrections/notifications
+        // are paginated by page number ({data, pagination:{page,totalPages}})
+        // rather than a cursor. Fetch every page so lists are not silently
+        // truncated at the default page size.
+        final pagination = asMap(asMap(result)['pagination']);
+        final totalPages = pagination['totalPages'] as int?;
+        var pageNumber = pagination['page'] as int? ?? 1;
+        if (totalPages != null && totalPages > pageNumber) {
+          final collected = items(result);
+          while (pageNumber < totalPages) {
+            pageNumber++;
+            final next = asMap(
+              await api.call(
+                'GET',
+                path,
+                query: {...?query, 'page': pageNumber},
+              ),
+            );
+            collected.addAll(items(next));
+          }
+          result = {...asMap(result), 'data': collected};
+        }
       }
       await workspace.transaction((d) {
         if (d.settings['epoch'] != epoch) {

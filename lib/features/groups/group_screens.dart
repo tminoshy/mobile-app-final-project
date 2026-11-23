@@ -321,11 +321,20 @@ class _GroupDetailScreenState extends ConsumerState<GroupDetailScreen> {
                         ? 'You are owed ${Money.format(balance)}'
                         : 'You owe ${Money.format(-balance)}',
                   ),
-                  if (group['pendingCount'] != null)
-                    Padding(
-                      padding: const EdgeInsets.only(top: 12),
-                      child: StatusBadge('${group['pendingCount']} pending'),
-                    ),
+                  Builder(
+                    builder: (context) {
+                      final pendingCount = asMap(group['pendingActions'])
+                          .values
+                          .whereType<num>()
+                          .fold<num>(0, (a, b) => a + b);
+                      return pendingCount == 0
+                          ? const SizedBox.shrink()
+                          : Padding(
+                              padding: const EdgeInsets.only(top: 12),
+                              child: StatusBadge('$pendingCount pending'),
+                            );
+                    },
+                  ),
                 ],
               ),
               SingleChildScrollView(
@@ -407,15 +416,20 @@ class _GroupDetailScreenState extends ConsumerState<GroupDetailScreen> {
                 ),
               if (tab == 'Activity') GroupActivity(groupId: widget.id),
               if (tab == 'Members')
-                ...asList(group['members']).map(
-                  (m) => PersonRow(
+                ...asList(group['members']).map((m) {
+                  final status = (m['status'] ?? 'active')
+                      .toString()
+                      .toLowerCase();
+                  return PersonRow(
                     app.groups.memberName(m),
                     subtitle: app.groups.memberId(m) == app.userId
                         ? 'You'
-                        : m['email']?.toString(),
+                        : status == 'active'
+                        ? null
+                        : status,
                     trailing: StatusBadge(m['role']?.toString() ?? 'Member'),
-                  ),
-                ),
+                  );
+                }),
               if (!full)
                 ActionButton(
                   'Delete from my groups',
@@ -471,7 +485,7 @@ class _GroupActivityState extends ConsumerState<GroupActivity> {
             query: filter == 'All'
                 ? null
                 : {
-                    'type': filter
+                    'category': filter
                         .substring(0, filter.length - 1)
                         .toLowerCase(),
                   },
@@ -501,7 +515,8 @@ class _GroupActivityState extends ConsumerState<GroupActivity> {
                     contentPadding: EdgeInsets.zero,
                     leading: const IconBadge(LucideIcons.history),
                     title: Text(
-                      (a['description'] ??
+                      (a['summary'] ??
+                              a['description'] ??
                               a['title'] ??
                               a['type'] ??
                               'Group activity')
@@ -879,7 +894,7 @@ class _GroupSettingsScreenState extends ConsumerState<GroupSettingsScreen> {
                     await app.groups.write(
                       'POST',
                       '/groups/${widget.id}/transfer-ownership',
-                      data: {'newOwnerId': uid},
+                      data: {'newOwnerUserId': uid},
                     );
                     if (mounted) setState(() => epoch++);
                   },

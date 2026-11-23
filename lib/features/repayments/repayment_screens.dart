@@ -28,7 +28,7 @@ class GroupBalances extends ConsumerWidget {
       builder: (context, value, reload) {
         final b = asMap(value);
         final members = asList(b['members'] ?? b['balances']),
-            transfers = asList(b['suggestedTransfers']),
+            transfers = asList(b['suggestedRepayments'] ?? b['suggestedTransfers']),
             repayments = asList(b['repayments']);
         return Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -57,12 +57,14 @@ class GroupBalances extends ConsumerWidget {
                 tone: 'success',
               ),
             ...transfers.map((t) {
-              final from = (t['fromUserId'] ?? t['senderId']).toString(),
-                  to = (t['toUserId'] ?? t['receiverId']).toString();
+              final from =
+                      (asMap(t['from'])['userId'] ?? t['fromUserId'])
+                          .toString(),
+                  to = (asMap(t['to'])['userId'] ?? t['toUserId']).toString();
               return FTCard(
                 children: [
                   Text(
-                    '${t['fromName'] ?? t['senderName'] ?? from} → ${t['toName'] ?? t['receiverName'] ?? to}',
+                    '${asMap(t['from'])['displayName'] ?? t['fromName'] ?? from} → ${asMap(t['to'])['displayName'] ?? t['toName'] ?? to}',
                     style: const TextStyle(fontWeight: FontWeight.w600),
                   ),
                   const SizedBox(height: 8),
@@ -99,7 +101,7 @@ class GroupBalances extends ConsumerWidget {
                 contentPadding: EdgeInsets.zero,
                 leading: const IconBadge(LucideIcons.arrowRightLeft),
                 title: Text(
-                  '${r['senderName'] ?? r['fromName'] ?? 'Member'} → ${r['receiverName'] ?? r['toName'] ?? 'Member'}',
+                  '${asMap(r['from'])['displayName'] ?? r['senderName'] ?? 'Member'} → ${asMap(r['to'])['displayName'] ?? r['receiverName'] ?? 'Member'}',
                   style: const TextStyle(fontSize: 13),
                 ),
                 subtitle: Caption(Money.format(Money.fromJson(r['amount']))),
@@ -164,9 +166,12 @@ class _RepaymentFormScreenState extends ConsumerState<RepaymentFormScreen> {
   }
 
   int get outstanding {
-    for (final t in asList(balances?['suggestedTransfers'])) {
-      if ((t['fromUserId'] ?? t['senderId']) == sender &&
-          (t['toUserId'] ?? t['receiverId']) == receiver) {
+    for (final t
+        in asList(
+          balances?['suggestedRepayments'] ?? balances?['suggestedTransfers'],
+        )) {
+      if ((asMap(t['from'])['userId'] ?? t['fromUserId']) == sender &&
+          (asMap(t['to'])['userId'] ?? t['toUserId']) == receiver) {
         return Money.fromJson(t['amount']);
       }
     }
@@ -249,8 +254,7 @@ class _RepaymentFormScreenState extends ConsumerState<RepaymentFormScreen> {
                         final result = asMap(
                           await app.groups
                               .submit('/groups/${widget.groupId}/repayments', {
-                                'senderId': sender,
-                                'receiverId': receiver,
+                                'toUserId': receiver,
                                 'amount': Money.toJson(cents),
                                 'note': note.text.trim(),
                               }),
@@ -301,8 +305,11 @@ class _RepaymentDetailScreenState extends ConsumerState<RepaymentDetailScreen> {
           final r = asMap(value['repayment']), g = asMap(value['group']);
           final status = (r['status'] ?? 'pending').toString().toLowerCase();
           final full = fullAccess(g);
-          final sender = (r['senderId'] ?? r['fromUserId']) == app.userId,
-              receiver = (r['receiverId'] ?? r['toUserId']) == app.userId;
+          final sender =
+                  (asMap(r['from'])['userId'] ?? r['fromUserId']) ==
+                  app.userId,
+              receiver =
+                  (asMap(r['to'])['userId'] ?? r['toUserId']) == app.userId;
           final reversal = asMap(r['pendingReversal'] ?? r['reversal']);
           final reversalPending =
               (reversal['status'] ?? '').toString().toLowerCase() == 'pending';
@@ -347,16 +354,16 @@ class _RepaymentDetailScreenState extends ConsumerState<RepaymentDetailScreen> {
               KeyValueCard({
                 'Group': g['name']?.toString() ?? '',
                 'Sender':
-                    (r['senderName'] ??
-                            r['fromName'] ??
-                            r['senderId'] ??
+                    (asMap(r['from'])['displayName'] ??
+                            r['senderName'] ??
+                            asMap(r['from'])['userId'] ??
                             r['fromUserId'] ??
                             '')
                         .toString(),
                 'Receiver':
-                    (r['receiverName'] ??
-                            r['toName'] ??
-                            r['receiverId'] ??
+                    (asMap(r['to'])['displayName'] ??
+                            r['receiverName'] ??
+                            asMap(r['to'])['userId'] ??
                             r['toUserId'] ??
                             '')
                         .toString(),
@@ -441,24 +448,27 @@ class _RepaymentDetailScreenState extends ConsumerState<RepaymentDetailScreen> {
                   'Status': reversal['status']?.toString() ?? 'Pending',
                   'Reason': reversal['reason']?.toString() ?? '',
                   'Requested by':
-                      (reversal['requesterName'] ??
-                              reversal['requestedByUserId'] ??
+                      (asMap(reversal['requester'])['displayName'] ??
+                              reversal['requesterName'] ??
+                              asMap(reversal['requester'])['userId'] ??
                               '')
                           .toString(),
                 }),
-                ...asList(reversal['approvers'] ?? reversal['approvals']).map(
-                  (a) => PersonRow(
-                    (a['displayName'] ?? a['userId'] ?? 'Member').toString(),
+                if (asMap(reversal['approver']).isNotEmpty)
+                  PersonRow(
+                    (asMap(reversal['approver'])['displayName'] ??
+                            asMap(reversal['approver'])['userId'] ??
+                            'Member')
+                        .toString(),
                     trailing: StatusBadge(
-                      a['status']?.toString() ?? 'No response',
+                      reversal['status']?.toString() ?? 'No response',
                     ),
                   ),
-                ),
                 if (full &&
                     reversalPending &&
                     (reversal['canApprove'] == true ||
                         ((sender || receiver) &&
-                            (reversal['requestedByUserId'] ??
+                            (asMap(reversal['requester'])['userId'] ??
                                     reversal['requesterId']) !=
                                 app.userId)))
                   Row(

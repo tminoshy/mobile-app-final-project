@@ -134,24 +134,21 @@ class NotificationService {
   Future<void> poll() async {
     final epoch = workspace.data.settings['epoch'];
     final fresh = <Json>[];
-    String? cursor;
-    final cursors = <String>{};
-    do {
-      final result = await api.call(
-        'GET',
-        '/notifications',
-        query: {'limit': 100, 'cursor': ?cursor},
+    // Notifications are paginated by page number, not a cursor.
+    var page = 1;
+    while (true) {
+      final result = asMap(
+        await api.call(
+          'GET',
+          '/notifications',
+          query: {'page': page, 'pageSize': 100},
+        ),
       );
       fresh.addAll(items(result));
-      final page = asMap(result);
-      cursor = page['hasMore'] == true ? page['nextCursor']?.toString() : null;
-      if (page['hasMore'] == true && (cursor == null || !cursors.add(cursor))) {
-        throw const ApiError(
-          'INVALID_RESPONSE',
-          'The notification cursor did not advance. Please refresh.',
-        );
-      }
-    } while (cursor != null);
+      final totalPages = asMap(result['pagination'])['totalPages'] as int?;
+      if (totalPages == null || page >= totalPages) break;
+      page++;
+    }
     final unseen = fresh
         .where(
           (n) =>

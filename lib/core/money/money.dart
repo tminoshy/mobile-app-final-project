@@ -19,7 +19,7 @@ final class Money {
 
   static int fromJson(Object? amount) =>
       amount == null ? 0 : (num.parse(amount.toString()) * 100).round();
-  static num toJson(int cents) => cents / 100;
+  static String toJson(int cents) => input(cents);
   static String input(int cents) =>
       '${cents ~/ 100}.${(cents.abs() % 100).toString().padLeft(2, '0')}';
   static String format(int cents, {bool signed = false}) {
